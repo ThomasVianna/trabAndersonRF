@@ -42,3 +42,4 @@ Thumbs.db
 # Projeto
 .env
 config.local.py
+.vs/
