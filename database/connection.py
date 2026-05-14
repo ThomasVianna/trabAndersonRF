@@ -9,7 +9,7 @@ DB_PORT = os.getenv('DB_PORT', '1433')
 DB_DATABASE = os.getenv('DB_DATABASE', 'empresa')
 DB_USERNAME = os.getenv('DB_USERNAME', '')
 DB_PASSWORD = os.getenv('DB_PASSWORD', '')
-DB_TRUSTED_CONNECTION = os.getenv('DB_TRUSTED_CONNECTION', 'no').lower() in ('yes', 'true', '1')
+DB_TRUSTED_CONNECTION = os.getenv('DB_TRUSTED_CONNECTION', 'yes').lower() in ('yes', 'true', '1')
 DB_ENCRYPT = os.getenv('DB_ENCRYPT', 'no').lower() in ('yes', 'true', '1')
 
 if DB_TRUSTED_CONNECTION:
