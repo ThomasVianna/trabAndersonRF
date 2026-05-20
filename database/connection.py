@@ -1,77 +1,54 @@
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 import os
-from urllib.parse import quote_plus
 from dotenv import load_dotenv
+from pymongo import MongoClient
+from pymongo.errors import ConnectionFailure
 
 # Carregar variáveis de ambiente do arquivo .env
 load_dotenv()
 
-DB_TYPE = os.getenv('DB_TYPE', 'sqlite').lower()
+DB_TYPE = os.getenv('DB_TYPE', 'mongodb').lower()
+if DB_TYPE != 'mongodb':
+    raise ValueError("DB_TYPE deve ser 'mongodb'. Atualize seu arquivo .env.")
 
-if DB_TYPE == 'sqlserver':
-    DB_DRIVER = os.getenv('DB_DRIVER', 'ODBC Driver 18 for SQL Server')
-    DB_SERVER = os.getenv('DB_SERVER', 'localhost')
-    DB_PORT = os.getenv('DB_PORT', '1433')
-    DB_DATABASE = os.getenv('DB_DATABASE', 'empresa')
-    DB_USERNAME = os.getenv('DB_USERNAME', '')
-    DB_PASSWORD = os.getenv('DB_PASSWORD', '')
-    DB_TRUSTED_CONNECTION = os.getenv('DB_TRUSTED_CONNECTION', 'no').lower() in ('yes', 'true', '1')
-    DB_ENCRYPT = os.getenv('DB_ENCRYPT', 'no').lower() in ('yes', 'true', '1')
-
-    if DB_TRUSTED_CONNECTION:
-        odbc_str = (
-            f"Driver={{{DB_DRIVER}}};"
-            f"Server={DB_SERVER},{DB_PORT};"
-            f"Database={DB_DATABASE};"
-            "Trusted_Connection=yes;"
-        )
-    else:
-        if not DB_USERNAME or not DB_PASSWORD:
-            raise ValueError(
-                'Por favor configure DB_USERNAME e DB_PASSWORD ou habilite DB_TRUSTED_CONNECTION=yes'
-            )
-        odbc_str = (
-            f"Driver={{{DB_DRIVER}}};"
-            f"Server={DB_SERVER},{DB_PORT};"
-            f"Database={DB_DATABASE};"
-            f"UID={DB_USERNAME};"
-            f"PWD={DB_PASSWORD};"
-        )
-
-    if DB_ENCRYPT:
-        odbc_str += 'Encrypt=yes;TrustServerCertificate=yes;'
-
-    DATABASE_URL = f"mssql+pyodbc:///?odbc_connect={quote_plus(odbc_str)}"
-    db_type_str = "SQL Server"
-
-elif DB_TYPE == 'sqlite':
-    DB_SQLITE_PATH = os.getenv('DB_SQLITE_PATH', 'database/empresa.db')
-    os.makedirs(os.path.dirname(DB_SQLITE_PATH) or '.', exist_ok=True)
-    DATABASE_URL = f'sqlite:///{DB_SQLITE_PATH}'
-    db_type_str = "SQLite"
-
-else:
-    raise ValueError(f"Tipo de banco de dados inválido: {DB_TYPE}. Use 'sqlserver' ou 'sqlite'")
+MONGO_URI = os.getenv('MONGO_URI', '').strip()
+MONGO_HOST = os.getenv('MONGO_HOST', 'localhost').strip()
+MONGO_PORT = int(os.getenv('MONGO_PORT', '27017'))
+MONGO_DATABASE = os.getenv('MONGO_DATABASE', 'empresa').strip()
+MONGO_USERNAME = os.getenv('MONGO_USERNAME', '').strip()
+MONGO_PASSWORD = os.getenv('MONGO_PASSWORD', '').strip()
+MONGO_AUTH_SOURCE = os.getenv('MONGO_AUTH_SOURCE', 'admin').strip()
 
 try:
-    if DB_TYPE == 'sqlserver':
-        engine = create_engine(
-            DATABASE_URL,
-            echo=False,
-            fast_executemany=True
-        )
-    else:  # sqlite
-        engine = create_engine(
-            DATABASE_URL,
-            echo=False,
-            connect_args={'check_same_thread': False}
-        )
-    
-    Session = sessionmaker(bind=engine)
-    session = Session()
-    print(f"✅ Conexão com {db_type_str} estabelecida com sucesso!")
+    if MONGO_URI:
+        client = MongoClient(MONGO_URI)
+    else:
+        client_args = {
+            'host': MONGO_HOST,
+            'port': MONGO_PORT,
+        }
+        if MONGO_USERNAME and MONGO_PASSWORD:
+            client_args.update({
+                'username': MONGO_USERNAME,
+                'password': MONGO_PASSWORD,
+                'authSource': MONGO_AUTH_SOURCE,
+            })
+        client = MongoClient(**client_args)
 
+    client.admin.command('ping')
 except Exception as e:
-    print(f"❌ Erro ao conectar ao {db_type_str}: {e}")
-    raise
+    raise ConnectionFailure(f"Não foi possível conectar ao MongoDB: {e}") from e
+
+# Banco e coleção usados pelo projeto
+db = client[MONGO_DATABASE]
+empresas = db.empresas
+empresas.create_index('cnpj', unique=True)
+
+
+def initialize_database():
+    """Verifica a conexão com o MongoDB."""
+    try:
+        client.admin.command('ping')
+        return True
+    except Exception:
+        return False
+
