@@ -1,161 +1,213 @@
-"""
-Funções utilitárias para gerenciar empresas no MongoDB.
-"""
 import re
+from datetime import datetime
 from bson.objectid import ObjectId
-from database.connection import empresas
+from database.connection import empresas, clientes, consultas, lancamentos
+from database.connection import IS_DEMO
 
 
-def _format_id(document):
-    return str(document.get('_id')) if document else None
+def limpar_cnpj(cnpj):
+    return re.sub(r'\D', '', (cnpj or '').strip())
 
 
-def _validar_cnpj(cnpj):
-    if not cnpj or not cnpj.strip():
-        raise ValueError('CNPJ não pode ser vazio')
-    cnpj_clean = re.sub(r'\D', '', cnpj)
-    if len(cnpj_clean) != 14:
-        raise ValueError('CNPJ deve ter 14 dígitos')
-    return cnpj.strip()
+def formatar_cnpj(cnpj):
+    raw = limpar_cnpj(cnpj)
+    if len(raw) != 14:
+        return cnpj or ''
+    return f'{raw[:2]}.{raw[2:5]}.{raw[5:8]}/{raw[8:12]}-{raw[12:]}'
 
 
-def _validar_string(nome, valor):
-    if not valor or not valor.strip():
-        raise ValueError(f'{nome} não pode ser vazio')
-    return valor.strip()
-
-
-def validar_empresa_documento(empresa):
-    if not isinstance(empresa, dict):
-        raise ValueError('Empresa deve ser um dicionário')
-
-    empresa['cnpj'] = _validar_cnpj(empresa.get('cnpj'))
-    empresa['razao_social'] = _validar_string('razao_social', empresa.get('razao_social'))
-    empresa['nome_fantasia'] = _validar_string('nome_fantasia', empresa.get('nome_fantasia'))
-    empresa['data_abertura'] = _validar_string('data_abertura', empresa.get('data_abertura'))
-
-    endereco = empresa.get('endereco') or {}
-    empresa['endereco'] = {
-        'rua': _validar_string('endereco.rua', endereco.get('rua')),
-        'numero': _validar_string('endereco.numero', endereco.get('numero')),
-        'bairro': _validar_string('endereco.bairro', endereco.get('bairro')),
-        'cidade': _validar_string('endereco.cidade', endereco.get('cidade')),
-    }
-
-    natureza = empresa.get('natureza_juridica') or {}
-    empresa['natureza_juridica'] = {
-        'classificacao': _validar_string('natureza_juridica.classificacao', natureza.get('classificacao')),
-        'descricao': _validar_string('natureza_juridica.descricao', natureza.get('descricao')),
-    }
-
-    porte = empresa.get('porte_empresa') or {}
-    empresa['porte_empresa'] = {
-        'categoria': _validar_string('porte_empresa.categoria', porte.get('categoria')),
-        'faturamento': _validar_string('porte_empresa.faturamento', porte.get('faturamento')),
-    }
-
-    regime = empresa.get('regime_tributario') or {}
-    empresa['regime_tributario'] = {
-        'tributacao': _validar_string('regime_tributario.tributacao', regime.get('tributacao')),
-        'descricao': _validar_string('regime_tributario.descricao', regime.get('descricao')),
-    }
-
-    cnae = empresa.get('cnae') or {}
-    empresa['cnae'] = {
-        'codigo': _validar_string('cnae.codigo', cnae.get('codigo')),
-        'descricao': _validar_string('cnae.descricao', cnae.get('descricao')),
-    }
-
+def _prepare_empresa(doc):
+    if doc is None:
+        return None
+    empresa = dict(doc)
+    empresa['id'] = str(empresa.get('_id'))
+    empresa['cnpj_formatado'] = formatar_cnpj(empresa.get('cnpj', ''))
+    empresa.setdefault('endereco', {})
+    empresa.setdefault('regime_tributario', {})
+    empresa.setdefault('cnae', {})
+    empresa.setdefault('natureza_juridica', {})
+    empresa.setdefault('porte_empresa', {})
     return empresa
 
 
-def listar_todas_empresas():
-    try:
-        return list(empresas.find({}).sort('razao_social', 1))
-    except Exception as e:
-        print(f'Erro ao listar empresas: {e}')
-        return []
+def get_empresas(q=None):
+    query = {}
+    if q:
+        q = q.strip()
+        regex = {'$regex': re.escape(q), '$options': 'i'}
+        query = {
+            '$or': [
+                {'cnpj': {'$regex': q}},
+                {'razao_social': regex},
+            ]
+        }
+    docs = list(empresas.find(query).sort('razao_social', 1))
+    return [_prepare_empresa(doc) for doc in docs]
 
 
-def buscar_empresa_por_id(empresa_id):
+def find_empresa_by_cnpj(cnpj):
+    cnpj_clean = limpar_cnpj(cnpj)
+    doc = empresas.find_one({'cnpj': cnpj_clean})
+    return _prepare_empresa(doc)
+
+
+def find_empresa_by_id(id_value):
+    # Tenta corresponder tanto ObjectId (Mongo) quanto string (mock/demo)
     try:
-        if not ObjectId.is_valid(empresa_id):
+        try:
+            oid = ObjectId(id_value)
+        except Exception:
+            oid = id_value
+        doc = empresas.find_one({'_id': oid})
+        if not doc and not IS_DEMO:
+            # fallback: tente com a string do ObjectId
+            doc = empresas.find_one({'_id': str(oid)})
+        return _prepare_empresa(doc)
+    except Exception:
+        try:
+            # última tentativa: buscar por string id
+            doc = empresas.find_one({'_id': str(id_value)})
+            return _prepare_empresa(doc)
+        except Exception:
             return None
-        return empresas.find_one({'_id': ObjectId(empresa_id)})
-    except Exception as e:
-        print(f'Erro ao buscar empresa por ID: {e}')
-        return None
 
 
-def buscar_empresa_por_cnpj(cnpj):
+def create_empresa(data):
+    data = dict(data)
+    if 'cnpj' in data:
+        data['cnpj'] = limpar_cnpj(data['cnpj'])
+    data['created_at'] = datetime.utcnow()
+    empresas.insert_one(data)
+
+
+def update_empresa_by_cnpj(cnpj, data):
+    cnpj_clean = limpar_cnpj(cnpj)
+    data = dict(data)
+    if 'cnpj' in data:
+        data['cnpj'] = limpar_cnpj(data['cnpj'])
+    data['updated_at'] = datetime.utcnow()
+    empresas.update_one({'cnpj': cnpj_clean}, {'$set': data}, upsert=True)
+
+
+def delete_empresa_by_id(id_value):
     try:
-        return empresas.find_one({'cnpj': cnpj})
-    except Exception as e:
-        print(f'Erro ao buscar empresa: {e}')
-        return None
+        try:
+            empresas.delete_one({'_id': ObjectId(id_value)})
+        except Exception:
+            empresas.delete_one({'_id': id_value})
+    except Exception:
+        pass
 
 
-def buscar_empresa_por_razao_social(razao_social):
+def get_unique_regimes():
+    values = empresas.distinct('regime_tributario.tributacao')
+    return [{'id': idx + 1, 'tributacao': v} for idx, v in enumerate(values) if v]
+
+
+def get_clientes(q=None):
+    query = {}
+    if q:
+        regex = {'$regex': re.escape(q.strip()), '$options': 'i'}
+        query = {'$or': [{'nome': regex}, {'cpf': regex}]}
+    docs = list(clientes.find(query).sort('nome', 1))
+    result = []
+    for doc in docs:
+        item = dict(doc)
+        item['id'] = str(doc.get('_id'))
+        result.append(item)
+    return result
+
+
+def create_cliente(data):
+    data = dict(data)
+    data['cpf'] = re.sub(r'\D', '', (data.get('cpf') or '').strip())
+    data['created_at'] = datetime.utcnow()
+    clientes.insert_one(data)
+
+
+def delete_cliente_by_id(id_value):
     try:
-        regex = {'$regex': re.escape(razao_social), '$options': 'i'}
-        return list(empresas.find({'razao_social': regex}))
-    except Exception as e:
-        print(f'Erro ao buscar empresa: {e}')
-        return []
+        try:
+            clientes.delete_one({'_id': ObjectId(id_value)})
+        except Exception:
+            clientes.delete_one({'_id': id_value})
+    except Exception:
+        pass
 
 
-def exibir_empresa_detalhes(empresa):
-    if not empresa:
-        print('Empresa não encontrada')
-        return
-
-    print('\n' + '=' * 60)
-    print(f'EMPRESA: {empresa.get("razao_social")}')
-    print('=' * 60)
-    print(f'ID: {_format_id(empresa)}')
-    print(f'CNPJ: {empresa.get("cnpj")}')
-    print(f'Nome Fantasia: {empresa.get("nome_fantasia")}')
-    print(f'Data de Abertura: {empresa.get("data_abertura")}')
-
-    endereco = empresa.get('endereco', {})
-    if endereco:
-        print('\nENDEREÇO:')
-        print(f'  Rua: {endereco.get("rua")}, nº {endereco.get("numero")}')
-        print(f'  Bairro: {endereco.get("bairro")}')
-        print(f'  Cidade: {endereco.get("cidade")}')
-
-    natureza = empresa.get('natureza_juridica', {})
-    if natureza:
-        print(f'\nNATUREZA JURÍDICA: {natureza.get("classificacao")}')
-
-    porte = empresa.get('porte_empresa', {})
-    if porte:
-        print(f'\nPORTE: {porte.get("categoria")} ({porte.get("faturamento")})')
-
-    regime = empresa.get('regime_tributario', {})
-    if regime:
-        print(f'\nREGIME TRIBUTÁRIO: {regime.get("tributacao")}')
-
-    cnae = empresa.get('cnae', {})
-    if cnae:
-        print(f'\nCNAE: {cnae.get("codigo")} - {cnae.get("descricao")}')
-
-    print('\n' + '=' * 60 + '\n')
+def get_historico_consultas():
+    docs = list(consultas.find({}).sort('data_consulta', -1).limit(50))
+    result = []
+    for doc in docs:
+        item = dict(doc)
+        item['id'] = str(doc.get('_id'))
+        result.append(item)
+    return result
 
 
-def exibir_todas_empresas():
-    empresas_list = listar_todas_empresas()
+def save_consulta(documento, resultado, razao_social=''):
+    consultas.insert_one({
+        'tipo': 'CNPJ',
+        'documento': limpar_cnpj(documento),
+        'resultado': resultado,
+        'razao_social': razao_social,
+        'data_consulta': datetime.utcnow(),
+    })
 
-    if not empresas_list:
-        print('\nNenhuma empresa cadastrada\n')
-        return
 
-    print('\n' + '=' * 120)
-    print(f"{'ID':<24} {'CNPJ':<18} {'Razão Social':<40} {'Cidade':<20}")
-    print('=' * 120)
+def get_lancamentos():
+    docs = list(lancamentos.find({}).sort('data_vencimento', 1))
+    result = []
+    for doc in docs:
+        item = dict(doc)
+        item['id'] = str(doc.get('_id'))
+        result.append(item)
+    return result
 
-    for emp in empresas_list:
-        cidade = emp.get('endereco', {}).get('cidade', 'N/A')
-        print(f"{_format_id(emp):<24} {emp.get('cnpj', ''):<18} {emp.get('razao_social', ''):<40} {cidade:<20}")
 
-    print('=' * 120 + '\n')
+def create_lancamento(data):
+    record = dict(data)
+    record['valor'] = float(data.get('valor') or 0)
+    record['data_vencimento'] = data.get('vencimento')
+    record['created_at'] = datetime.utcnow()
+    lancamentos.insert_one(record)
+
+
+def delete_lancamento_by_id(id_value):
+    try:
+        try:
+            lancamentos.delete_one({'_id': ObjectId(id_value)})
+        except Exception:
+            lancamentos.delete_one({'_id': id_value})
+    except Exception:
+        pass
+
+
+def resumo_financeiro():
+    receitas = 0.0
+    despesas = 0.0
+    pendentes = 0.0
+    for item in get_lancamentos():
+        if item.get('tipo') == 'Receita':
+            receitas += float(item.get('valor') or 0)
+        else:
+            despesas += float(item.get('valor') or 0)
+        if item.get('status') != 'Pago':
+            pendentes += float(item.get('valor') or 0)
+    return receitas, despesas, pendentes
+
+
+def count_empresas():
+    return empresas.count_documents({})
+
+
+def count_empresas_ativas():
+    return empresas.count_documents({'situacao': 'ATIVA'})
+
+
+def count_clientes():
+    return clientes.count_documents({})
+
+
+def count_consultas():
+    return consultas.count_documents({})
