@@ -4,7 +4,7 @@ Equipe de Desenvolvimento — Projeto SIAT
 - Thomas  — Backend, API e Banco de Dados
 - Fabio — Integração com BrasilAPI, testes
 - Allan — DevOps e documentação
-- Lucas
+- Luan - Tester
 
 
 
