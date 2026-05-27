@@ -1,10 +1,10 @@
 Equipe de Desenvolvimento — Projeto SIAT
 
-- Alice Santos — Frontend, UI/UX
-- Bruno Oliveira — Backend, API e Banco de Dados
-- Camila Pereira — Integração com BrasilAPI, testes
-- Diego Martins — DevOps e documentação
-- Equipe Acadêmica · UniFatecie — Revisão e validação
+- Yasmim — Frontend, UI/UX
+- Thomas  — Backend, API e Banco de Dados
+- Fabio — Integração com BrasilAPI, testes
+- Allan — DevOps e documentação
+- Lucas
 
 
 
